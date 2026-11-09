@@ -2,7 +2,7 @@ import numpy as np
 import pandas as pd
 
 # 1. Đọc tệp dữ liệu
-df = pd.read_csv("media_all_channels_true_dataset.csv")
+df = pd.read_csv("media_all_channels_dirty_dataset.csv")
 
 print("=== 1. TỔNG QUAN DỮ LIỆU ===")
 print(df.info())
