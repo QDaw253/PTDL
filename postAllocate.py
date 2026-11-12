@@ -5,22 +5,28 @@ import seaborn as sns
 from sklearn.preprocessing import OneHotEncoder, StandardScaler
 from sklearn.compose import ColumnTransformer
 from sklearn.pipeline import Pipeline
-from sklearn.linear_model import LogisticRegression
+from sklearn.ensemble import RandomForestClassifier
 
-# 1. Đọc dữ liệu và tạo đặc trưng
+# 1. Đọc dữ liệu và tổng hợp theo chu kỳ Tuần (đồng bộ với analyticalOverview.py)
 df = pd.read_csv('media_all_channels_cleaned.csv')
 df['date'] = pd.to_datetime(df['date'])
-df['day_of_week'] = df['date'].dt.dayofweek
-df['month'] = df['date'].dt.month
-df['is_weekend'] = (df['day_of_week'] >= 5).astype(int)
-df['cpm'] = (df['cost'] / df['impressions']) * 1000
+df['week'] = df['date'].dt.to_period('W').astype(str)
 
-# 2. Huấn luyện mô hình phân loại tối ưu hóa (có vùng đệm 40% - 60%)
-q_low, q_high = df['roas'].quantile(0.40), df['roas'].quantile(0.60)
-df_clean = df[(df['roas'] <= q_low) | (df['roas'] >= q_high)].copy()
-df_clean['is_optimized'] = (df_clean['roas'] >= q_high).astype(int)
+weekly_df = df.groupby(['week', 'channel', 'campaign']).agg({
+    'cost': 'sum',
+    'impressions': 'sum',
+    'clicks': 'sum',
+    'revenue': 'sum'
+}).reset_index()
 
-num_cols = ['cost', 'impressions', 'clicks', 'conversions', 'cpc', 'cpa', 'ctr', 'conversion_rate', 'cpm', 'day_of_week', 'month', 'is_weekend']
+weekly_df['roas'] = weekly_df['revenue'] / weekly_df['cost']
+weekly_df['cpc'] = weekly_df['cost'] / weekly_df['clicks']
+weekly_df['ctr'] = weekly_df['clicks'] / weekly_df['impressions']
+weekly_df['cpm'] = (weekly_df['cost'] / weekly_df['impressions']) * 1000
+weekly_df['is_optimized'] = (weekly_df['roas'] > weekly_df['roas'].median()).astype(int)
+
+# 2. Huấn luyện mô hình phân loại trên dữ liệu Tuần (Không Data Leakage)
+num_cols = ['cost', 'impressions', 'clicks', 'cpc', 'ctr', 'cpm']
 cat_cols = ['channel', 'campaign']
 
 preprocessor = ColumnTransformer([
@@ -30,9 +36,9 @@ preprocessor = ColumnTransformer([
 
 model = Pipeline([
     ('prep', preprocessor),
-    ('clf', LogisticRegression(max_iter=1000))
+    ('clf', RandomForestClassifier(n_estimators=150, max_depth=8, random_state=42))
 ])
-model.fit(df_clean[num_cols + cat_cols], df_clean['is_optimized'])
+model.fit(weekly_df[num_cols + cat_cols], weekly_df['is_optimized'])
 
 # 3. Tổng hợp 42 cặp Kênh + Chiến dịch & dự đoán xác suất tối ưu
 cc_df = df.groupby(['channel', 'campaign']).agg({
@@ -41,10 +47,10 @@ cc_df = df.groupby(['channel', 'campaign']).agg({
 }).reset_index()
 cc_df['roas'] = cc_df['revenue'] / cc_df['cost']
 
-cc_daily = df.groupby(['channel', 'campaign'])[num_cols].mean().reset_index()
-cc_df['opt_prob'] = model.predict_proba(cc_daily[num_cols + cat_cols])[:, 1]
+cc_weekly = weekly_df.groupby(['channel', 'campaign'])[num_cols].mean().reset_index()
+cc_df['opt_prob'] = model.predict_proba(cc_weekly[num_cols + cat_cols])[:, 1]
 
-# 4. Mô phỏng Phân bổ Ngân sách GIỮ NGUYÊN TỔNG VỐN BAN ĐẦU
+# 4. Mô phỏng Phân bổ Ngân sách GIỮ NGUYÊN TỔNG VỐN (Có tính Hiệu suất biên giảm dần)
 total_initial_cost = cc_df['cost'].sum()
 total_initial_rev = cc_df['revenue'].sum()
 total_initial_profit = total_initial_rev - total_initial_cost
@@ -61,8 +67,12 @@ cc_df['raw_new_cost'] = cc_df['cost'] * cc_df['opt_prob'].apply(get_weight_multi
 # Chuẩn hóa lại để Tổng Ngân sách Mới == Tổng Ngân sách Ban đầu
 cc_df['new_cost'] = cc_df['raw_new_cost'] * (total_initial_cost / cc_df['raw_new_cost'].sum())
 
-# Tính Doanh thu dự kiến mới dựa trên ROAS thực tế của từng cặp Kênh + Chiến dịch
-cc_df['new_revenue'] = cc_df['new_cost'] * cc_df['roas']
+# Điều chỉnh ROAS mới theo quy luật hiệu suất biên giảm dần (Diminishing Returns, alpha = 0.15)
+alpha = 0.15
+cc_df['adjusted_roas'] = cc_df['roas'] * ((cc_df['cost'] / cc_df['new_cost']) ** alpha)
+
+# Tính Doanh thu dự kiến mới dựa trên ROAS đã điều chỉnh
+cc_df['new_revenue'] = cc_df['new_cost'] * cc_df['adjusted_roas']
 
 total_new_rev = cc_df['new_revenue'].sum()
 total_new_profit = total_new_rev - total_initial_cost
@@ -100,5 +110,5 @@ for i, v in enumerate([total_initial_rev/1e6, total_new_rev/1e6]):
     axes[1].text(i, v + 10, f"{v:,.2f}M", ha='center', fontweight='bold')
 
 plt.tight_layout()
-plt.savefig('budget_reallocation_simulation.png', dpi=150)
+plt.savefig('budget_reallocation_simulation2.png', dpi=150)
 plt.show()

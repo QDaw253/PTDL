@@ -94,14 +94,32 @@ print(cc_df[['channel', 'campaign', 'cost', 'revenue', 'roas', 'cpa', 'status']]
 print("\n")
 
 # ==============================================================================
-# PHẦN 4: HUẤN LUYỆN MÔ HÌNH MACHINE LEARNING & ĐỀ XUẤT NGÂN SÁCH
+# PHẦN 4: HUẤN LUYỆN MÔ HÌNH MACHINE LEARNING (CHU KỲ TUẦN & CHỐNG DATA LEAKAGE)
 # ==============================================================================
-# Gán nhãn trên tập dữ liệu chi tiết theo ngày (7.644 dòng) để mô hình có đủ mẫu học quy luật
-df['is_optimized'] = (df['roas'] > df['roas'].median()).astype(int)
+# Gom dữ liệu theo chu kỳ Tuần để triệt tiêu nhiễu độ trễ chuyển đổi theo ngày
+df['date'] = pd.to_datetime(df['date'])
+df['week'] = df['date'].dt.to_period('W').astype(str)
 
-features = ['channel', 'campaign', 'cost', 'cpc', 'cpa', 'ctr', 'conversion_rate']
-X = df[features]
-y = df['is_optimized']
+weekly_df = df.groupby(['week', 'channel', 'campaign']).agg({
+    'cost': 'sum',
+    'impressions': 'sum',
+    'clicks': 'sum',
+    'revenue': 'sum'
+}).reset_index()
+
+weekly_df['roas'] = weekly_df['revenue'] / weekly_df['cost']
+weekly_df['cpc'] = weekly_df['cost'] / weekly_df['clicks']
+weekly_df['ctr'] = weekly_df['clicks'] / weekly_df['impressions']
+weekly_df['cpm'] = (weekly_df['cost'] / weekly_df['impressions']) * 1000
+weekly_df['is_optimized'] = (weekly_df['roas'] > weekly_df['roas'].median()).astype(int)
+
+# Chỉ dùng các biến đầu vào & tương tác (loại bỏ conversions, cpa, conversion_rate để tránh rò rỉ dữ liệu)
+num_features = ['cost', 'impressions', 'clicks', 'cpc', 'ctr', 'cpm']
+cat_features = ['channel', 'campaign']
+features = cat_features + num_features
+
+X = weekly_df[features]
+y = weekly_df['is_optimized']
 
 # Chia tập Train/Test (80/20)
 X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42, stratify=y)
@@ -109,39 +127,32 @@ X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_
 # Tiền xử lý: Chuẩn hóa biến số + One-Hot Encoding biến phân loại
 preprocessor = ColumnTransformer(
     transformers=[
-        ('num', StandardScaler(), ['cost', 'cpc', 'cpa', 'ctr', 'conversion_rate']),
-        ('cat', OneHotEncoder(drop='first', sparse_output=False), ['channel', 'campaign'])
+        ('num', StandardScaler(), num_features),
+        ('cat', OneHotEncoder(drop='first', sparse_output=False), cat_features)
     ]
 )
 
 # Xây dựng Pipeline với Random Forest Classifier
 model = Pipeline(steps=[
     ('preprocessor', preprocessor),
-    ('classifier', RandomForestClassifier(n_estimators=100, max_depth=8, random_state=42))
+    ('classifier', RandomForestClassifier(n_estimators=150, max_depth=8, random_state=42))
 ])
 
 model.fit(X_train, y_train)
 y_pred = model.predict(X_test)
 
-print("=== 4. ĐÁNH GIÁ ĐỘ CHÍNH XÁC MÔ HÌNH ===")
+print("=== 4. ĐÁNH GIÁ ĐỘ CHÍNH XÁC MÔ HÌNH (DỮ LIỆU TUẦN) ===")
 print(f"- Accuracy trên tập Test: {accuracy_score(y_test, y_pred):.4f}")
 print(f"- Chỉ số ROC-AUC:        {roc_auc_score(y_test, model.predict_proba(X_test)[:, 1]):.4f}\n")
 
-# Tính trung bình các chỉ số theo ngày của 42 cặp Kênh + Chiến dịch để đưa vào mô hình dự đoán xác suất tối ưu
-cc_daily_avg = df.groupby(['channel', 'campaign']).agg({
-    'cost': 'mean',
-    'cpc': 'mean',
-    'cpa': 'mean',
-    'ctr': 'mean',
-    'conversion_rate': 'mean'
-}).reset_index()
-
-cc_df['opt_prob'] = model.predict_proba(cc_daily_avg[features])[:, 1]
+# Tính trung bình theo tuần của 42 cặp Kênh + Chiến dịch để đưa vào mô hình dự đoán xác suất tối ưu
+cc_weekly_avg = weekly_df.groupby(['channel', 'campaign'])[num_features].mean().reset_index()
+cc_df['opt_prob'] = model.predict_proba(cc_weekly_avg[features])[:, 1]
 
 # Quy tắc đề xuất tăng/giảm ngân sách kết hợp giữa Nhãn thực tế & Xác suất mô hình
 def recommend_budget(row):
     if row['opt_prob'] >= 0.70 and row['is_optimized'] == 1:
-        return 'Tăng ngân sách (+20%)'
+        return 'Tăng ngân sách (+30%)'
     elif row['opt_prob'] < 0.40 and row['is_optimized'] == 0:
         return 'Giảm ngân sách (-30%)'
     else:
@@ -176,5 +187,5 @@ axes[1].set_xlabel('Chiến dịch')
 axes[1].set_ylabel('Kênh')
 
 plt.tight_layout()
-plt.savefig('phan_tich_quang_cao.png', dpi=150)
+plt.savefig('phan_tich_quang_cao2.png', dpi=150)
 plt.show()
