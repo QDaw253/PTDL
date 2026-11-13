@@ -7,7 +7,6 @@ from sklearn.preprocessing import OneHotEncoder, StandardScaler
 from sklearn.compose import ColumnTransformer
 from sklearn.pipeline import Pipeline
 from sklearn.ensemble import RandomForestClassifier
-from sklearn.metrics import accuracy_score, roc_auc_score, classification_report
 
 # 1. Đọc dữ liệu và tổng hợp theo chu kỳ Tuần (đồng bộ với analyticalOverview.py)
 df = pd.read_csv('media_all_channels_cleaned.csv')
@@ -27,16 +26,13 @@ weekly_df['ctr'] = weekly_df['clicks'] / weekly_df['impressions']
 weekly_df['cpm'] = (weekly_df['cost'] / weekly_df['impressions']) * 1000
 weekly_df['is_optimized'] = (weekly_df['roas'] > weekly_df['roas'].median()).astype(int)
 
-# 2. Huấn luyện mô hình phân loại trên dữ liệu Tuần (Không Data Leakage)
+# 2. Huấn luyện mô hình phân loại trên dữ liệu Tuần (Đồng bộ 100% với analyticalOverview.py)
 num_cols = ['cost', 'impressions', 'clicks', 'cpc', 'ctr', 'cpm']
 cat_cols = ['channel', 'campaign']
-
-# Định nghĩa X và y trước khi chia train/test
-X = weekly_df[num_cols + cat_cols]
-y = weekly_df['is_optimized']
+features = cat_cols + num_cols
 
 X_train, X_test, y_train, y_test = train_test_split(
-    X, y, test_size=0.2, random_state=42, stratify=y
+    weekly_df[features], weekly_df['is_optimized'], test_size=0.2, random_state=42, stratify=weekly_df['is_optimized']
 )
 
 preprocessor = ColumnTransformer([
@@ -48,17 +44,7 @@ model = Pipeline([
     ('prep', preprocessor),
     ('clf', RandomForestClassifier(n_estimators=150, max_depth=8, random_state=42))
 ])
-
-# Huấn luyện trên tập Train
 model.fit(X_train, y_train)
-
-# Đánh giá trên tập Test
-y_pred = model.predict(X_test)
-y_prob = model.predict_proba(X_test)[:, 1]
-print("=== ĐÁNH GIÁ MÔ HÌNH TRÊN TẬP TEST ===")
-print(f"Accuracy: {accuracy_score(y_test, y_pred):.4f}")
-print(f"ROC-AUC:  {roc_auc_score(y_test, y_prob):.4f}")
-print(classification_report(y_test, y_pred, target_names=['Chưa tối ưu (0)', 'Tối ưu (1)']))
 
 # 3. Tổng hợp 42 cặp Kênh + Chiến dịch & dự đoán xác suất tối ưu
 cc_df = df.groupby(['channel', 'campaign']).agg({
@@ -66,23 +52,24 @@ cc_df = df.groupby(['channel', 'campaign']).agg({
     'revenue': 'sum'
 }).reset_index()
 cc_df['roas'] = cc_df['revenue'] / cc_df['cost']
+cc_df['is_optimized'] = (cc_df['roas'] > cc_df['roas'].median()).astype(int)
 
 cc_weekly = weekly_df.groupby(['channel', 'campaign'])[num_cols].mean().reset_index()
-cc_df['opt_prob'] = model.predict_proba(cc_weekly[num_cols + cat_cols])[:, 1]
+cc_df['opt_prob'] = model.predict_proba(cc_weekly[features])[:, 1]
 
-# 4. Mô phỏng Phân bổ Ngân sách GIỮ NGUYÊN TỔNG VỐN (Có tính Hiệu suất biên giảm dần)
+# 4. Mô phỏng Phân bổ Ngân sách GIỮ NGUYÊN TỔNG VỐN (Đồng bộ quy tắc kép & Hiệu suất biên giảm dần)
 total_initial_cost = cc_df['cost'].sum()
 total_initial_rev = cc_df['revenue'].sum()
 total_initial_profit = total_initial_rev - total_initial_cost
 
-def get_weight_multiplier(prob):
-    if prob >= 0.70:
+def get_weight_multiplier(row):
+    if row['opt_prob'] >= 0.70 and row['is_optimized'] == 1:
         return 1.30  # Tăng 30% trọng số vốn
-    elif prob < 0.40:
+    elif row['opt_prob'] < 0.40 and row['is_optimized'] == 0:
         return 0.70  # Giảm 30% trọng số vốn
     return 1.00
 
-cc_df['raw_new_cost'] = cc_df['cost'] * cc_df['opt_prob'].apply(get_weight_multiplier)
+cc_df['raw_new_cost'] = cc_df['cost'] * cc_df.apply(get_weight_multiplier, axis=1)
 
 # Chuẩn hóa lại để Tổng Ngân sách Mới == Tổng Ngân sách Ban đầu
 cc_df['new_cost'] = cc_df['raw_new_cost'] * (total_initial_cost / cc_df['raw_new_cost'].sum())
@@ -130,5 +117,5 @@ for i, v in enumerate([total_initial_rev/1e6, total_new_rev/1e6]):
     axes[1].text(i, v + 10, f"{v:,.2f}M", ha='center', fontweight='bold')
 
 plt.tight_layout()
-plt.savefig('budget_reallocation_simulation2.png', dpi=150)
+plt.savefig('budget_reallocation_simulation.png', dpi=150)
 plt.show()

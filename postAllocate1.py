@@ -114,5 +114,5 @@ for i, v in enumerate([total_initial_rev/1e6, total_new_rev/1e6]):
     axes[1].text(i, v + 10, f"{v:,.2f}M", ha='center', fontweight='bold')
 
 plt.tight_layout()
-plt.savefig('budget_reallocation_simulation.png', dpi=150)
+plt.savefig('budget_reallocation_simulation2.png', dpi=150)
 plt.show()
