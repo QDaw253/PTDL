@@ -6,8 +6,9 @@ from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import OneHotEncoder, StandardScaler
 from sklearn.compose import ColumnTransformer
 from sklearn.pipeline import Pipeline
-from sklearn.ensemble import RandomForestClassifier
-from sklearn.metrics import classification_report, accuracy_score, roc_auc_score
+from sklearn.ensemble import RandomForestClassifier, GradientBoostingClassifier
+from sklearn.linear_model import LogisticRegression
+from sklearn.metrics import accuracy_score, roc_auc_score, average_precision_score
 
 # Cấu hình giao diện biểu đồ
 sns.set_theme(style="whitegrid")
@@ -94,9 +95,8 @@ print(cc_df[['channel', 'campaign', 'cost', 'revenue', 'roas', 'cpa', 'status']]
 print("\n")
 
 # ==============================================================================
-# PHẦN 4: HUẤN LUYỆN MÔ HÌNH MACHINE LEARNING (CHU KỲ TUẦN & CHỐNG DATA LEAKAGE)
+# PHẦN 4: HUẤN LUYỆN & SO SÁNH 3 MÔ HÌNH MACHINE LEARNING (CHU KỲ TUẦN)
 # ==============================================================================
-# Gom dữ liệu theo chu kỳ Tuần để triệt tiêu nhiễu độ trễ chuyển đổi theo ngày
 df['date'] = pd.to_datetime(df['date'])
 df['week'] = df['date'].dt.to_period('W').astype(str)
 
@@ -124,7 +124,6 @@ y = weekly_df['is_optimized']
 # Chia tập Train/Test (80/20)
 X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42, stratify=y)
 
-# Tiền xử lý: Chuẩn hóa biến số + One-Hot Encoding biến phân loại
 preprocessor = ColumnTransformer(
     transformers=[
         ('num', StandardScaler(), num_features),
@@ -132,22 +131,44 @@ preprocessor = ColumnTransformer(
     ]
 )
 
-# Xây dựng Pipeline với Random Forest Classifier
-model = Pipeline(steps=[
-    ('preprocessor', preprocessor),
-    ('classifier', RandomForestClassifier(n_estimators=150, max_depth=8, random_state=42))
-])
+# Khởi tạo 3 mô hình phân loại để đối chiếu
+classifiers = {
+    'Random Forest': RandomForestClassifier(n_estimators=150, max_depth=8, random_state=42),
+    'Logistic Regression': LogisticRegression(max_iter=1000, random_state=42),
+    'Gradient Boosting': GradientBoostingClassifier(n_estimators=150, learning_rate=0.05, max_depth=4, random_state=42)
+}
 
-model.fit(X_train, y_train)
-y_pred = model.predict(X_test)
+print("=== 4. SO SÁNH HIỆU NĂNG 3 MÔ HÌNH TRÊN TẬP TEST (DỮ LIỆU TUẦN) ===")
+results = []
+trained_models = {}
 
-print("=== 4. ĐÁNH GIÁ ĐỘ CHÍNH XÁC MÔ HÌNH (DỮ LIỆU TUẦN) ===")
-print(f"- Accuracy trên tập Test: {accuracy_score(y_test, y_pred):.4f}")
-print(f"- Chỉ số ROC-AUC:        {roc_auc_score(y_test, model.predict_proba(X_test)[:, 1]):.4f}\n")
+for name, clf in classifiers.items():
+    pipe = Pipeline(steps=[
+        ('preprocessor', preprocessor),
+        ('classifier', clf)
+    ])
+    pipe.fit(X_train, y_train)
+    y_pred = pipe.predict(X_test)
+    y_prob = pipe.predict_proba(X_test)[:, 1]
+    
+    acc = accuracy_score(y_test, y_pred)
+    pr_auc = average_precision_score(y_test, y_prob)
+    roc_auc = roc_auc_score(y_test, y_prob)
+    
+    results.append({'Mô hình': name, 'Accuracy': acc, 'PR-AUC': pr_auc, 'ROC-AUC': roc_auc})
+    trained_models[name] = pipe
 
-# Tính trung bình theo tuần của 42 cặp Kênh + Chiến dịch để đưa vào mô hình dự đoán xác suất tối ưu
+results_df = pd.DataFrame(results).sort_values(by='ROC-AUC', ascending=False)
+print(results_df.to_string(index=False))
+
+# Chọn mô hình tốt nhất dựa trên ROC-AUC (hoặc chỉ định 'Random Forest' nếu muốn cố định)
+best_model_name = results_df.iloc[0]['Mô hình']
+best_model = trained_models[best_model_name]
+print(f"\n-> Mô hình tốt nhất được chọn để dự đoán xác suất tối ưu: {best_model_name}\n")
+
+# Tính trung bình theo tuần của 42 cặp Kênh + Chiến dịch để dự đoán xác suất tối ưu
 cc_weekly_avg = weekly_df.groupby(['channel', 'campaign'])[num_features].mean().reset_index()
-cc_df['opt_prob'] = model.predict_proba(cc_weekly_avg[features])[:, 1]
+cc_df['opt_prob'] = best_model.predict_proba(cc_weekly_avg[features])[:, 1]
 
 # Quy tắc đề xuất tăng/giảm ngân sách kết hợp giữa Nhãn thực tế & Xác suất mô hình
 def recommend_budget(row):
@@ -160,7 +181,7 @@ def recommend_budget(row):
 
 cc_df['recommendation'] = cc_df.apply(recommend_budget, axis=1)
 
-print("=== 5. BẢNG ĐỀ XUẤT PHÂN BỔ NGÂN SÁCH TỪ MÔ HÌNH ===")
+print(f"=== 5. BẢNG ĐỀ XUẤT PHÂN BỔ NGÂN SÁCH TỪ MÔ HÌNH ({best_model_name}) ===")
 print(cc_df[['channel', 'campaign', 'roas', 'opt_prob', 'status', 'recommendation']].sort_values(by='opt_prob', ascending=False).to_string(index=False))
 
 # ==============================================================================
@@ -168,7 +189,6 @@ print(cc_df[['channel', 'campaign', 'roas', 'opt_prob', 'status', 'recommendatio
 # ==============================================================================
 fig, axes = plt.subplots(1, 2, figsize=(16, 6))
 
-# Biểu đồ 1: So sánh Chi phí và Doanh thu theo Kênh
 x_pos = np.arange(len(channel_df))
 width = 0.35
 axes[0].bar(x_pos - width/2, channel_df['cost']/1e6, width, label='Chi phí (Triệu USD)', color='#e74c3c')
@@ -179,7 +199,6 @@ axes[0].set_title('So sánh Chi phí và Doanh thu theo Kênh')
 axes[0].set_ylabel('Triệu USD')
 axes[0].legend()
 
-# Biểu đồ 2: Heatmap ROAS theo Kênh và Chiến dịch
 pivot_roas = cc_df.pivot(index='channel', columns='campaign', values='roas')
 sns.heatmap(pivot_roas, annot=True, fmt='.2f', cmap='YlGnBu', ax=axes[1])
 axes[1].set_title('Ma trận ROAS theo Kênh và Chiến dịch')

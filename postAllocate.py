@@ -6,9 +6,11 @@ from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import OneHotEncoder, StandardScaler
 from sklearn.compose import ColumnTransformer
 from sklearn.pipeline import Pipeline
-from sklearn.ensemble import RandomForestClassifier
+from sklearn.ensemble import RandomForestClassifier, GradientBoostingClassifier
+from sklearn.linear_model import LogisticRegression
+from sklearn.metrics import accuracy_score, roc_auc_score, average_precision_score
 
-# 1. Đọc dữ liệu và tổng hợp theo chu kỳ Tuần (đồng bộ với analyticalOverview.py)
+# 1. Đọc dữ liệu và tổng hợp theo chu kỳ Tuần (đồng bộ với analyticalOverview_2.py)
 df = pd.read_csv('media_all_channels_cleaned.csv')
 df['date'] = pd.to_datetime(df['date'])
 df['week'] = df['date'].dt.to_period('W').astype(str)
@@ -26,7 +28,7 @@ weekly_df['ctr'] = weekly_df['clicks'] / weekly_df['impressions']
 weekly_df['cpm'] = (weekly_df['cost'] / weekly_df['impressions']) * 1000
 weekly_df['is_optimized'] = (weekly_df['roas'] > weekly_df['roas'].median()).astype(int)
 
-# 2. Huấn luyện mô hình phân loại trên dữ liệu Tuần (Đồng bộ 100% với analyticalOverview.py)
+# 2. Huấn luyện & đối chiếu 3 mô hình phân loại trên dữ liệu Tuần
 num_cols = ['cost', 'impressions', 'clicks', 'cpc', 'ctr', 'cpm']
 cat_cols = ['channel', 'campaign']
 features = cat_cols + num_cols
@@ -40,11 +42,40 @@ preprocessor = ColumnTransformer([
     ('cat', OneHotEncoder(drop='first', sparse_output=False), cat_cols)
 ])
 
-model = Pipeline([
-    ('prep', preprocessor),
-    ('clf', RandomForestClassifier(n_estimators=150, max_depth=8, random_state=42))
-])
-model.fit(X_train, y_train)
+classifiers = {
+    'Random Forest': RandomForestClassifier(n_estimators=150, max_depth=8, random_state=42),
+    'Logistic Regression': LogisticRegression(max_iter=1000, random_state=42),
+    'Gradient Boosting': GradientBoostingClassifier(n_estimators=150, learning_rate=0.05, max_depth=4, random_state=42)
+}
+
+print("=== SO SÁNH HIỆU NĂNG 3 MÔ HÌNH TRÊN TẬP TEST ===")
+results = []
+trained_models = {}
+
+for name, clf in classifiers.items():
+    pipe = Pipeline([
+        ('prep', preprocessor),
+        ('clf', clf)
+    ])
+    pipe.fit(X_train, y_train)
+    y_pred = pipe.predict(X_test)
+    y_prob = pipe.predict_proba(X_test)[:, 1]
+    
+    results.append({
+        'Mô hình': name,
+        'Accuracy': accuracy_score(y_test, y_pred),
+        'PR-AUC': average_precision_score(y_test, y_prob),
+        'ROC-AUC': roc_auc_score(y_test, y_prob)
+    })
+    trained_models[name] = pipe
+
+results_df = pd.DataFrame(results).sort_values(by='ROC-AUC', ascending=False)
+print(results_df.to_string(index=False))
+
+# Giữ cố định mô hình Random Forest cho bước dự đoán xác suất phân bổ ngân sách
+selected_model_name = 'Random Forest'
+model = trained_models[selected_model_name]
+print(f"\n-> Giữ cố định mô hình '{selected_model_name}' cho bước mô phỏng phân bổ ngân sách.\n")
 
 # 3. Tổng hợp 42 cặp Kênh + Chiến dịch & dự đoán xác suất tối ưu
 cc_df = df.groupby(['channel', 'campaign']).agg({
@@ -87,7 +118,7 @@ rev_gain = total_new_rev - total_initial_rev
 rev_gain_pct = (rev_gain / total_initial_rev) * 100
 profit_gain_pct = (rev_gain / total_initial_profit) * 100
 
-print("=== KẾT QUẢ MÔ PHỎNG TỐI ƯU HÓA DOANH THU & LỢI NHUẬN ===")
+print(f"=== KẾT QUẢ MÔ PHỎNG TỐI ƯU HÓA DOANH THU & LỢI NHUẬN ({selected_model_name}) ===")
 print(f"Tổng Ngân sách Ban đầu:    {total_initial_cost:,.2f}")
 print(f"Tổng Ngân sách Mới:        {cc_df['new_cost'].sum():,.2f}")
 print(f"Doanh thu Ban đầu:         {total_initial_rev:,.2f}")
@@ -106,7 +137,7 @@ axes[0].bar(x - w/2, ch_comp['cost']/1e6, w, label='Ngân sách Ban đầu', col
 axes[0].bar(x + w/2, ch_comp['new_cost']/1e6, w, label='Ngân sách Tối ưu Mới', color='#3498db')
 axes[0].set_xticks(x)
 axes[0].set_xticklabels(ch_comp['channel'], rotation=25)
-axes[0].set_title('Dịch chuyển Ngân sách theo Kênh (Cùng Tổng Vốn)')
+axes[0].set_title(f'Dịch chuyển Ngân sách theo Kênh ({selected_model_name})')
 axes[0].set_ylabel('Triệu USD')
 axes[0].legend()
 
