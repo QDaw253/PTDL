@@ -8,7 +8,7 @@ from sklearn.compose import ColumnTransformer
 from sklearn.pipeline import Pipeline
 from sklearn.ensemble import RandomForestClassifier, GradientBoostingClassifier
 from sklearn.linear_model import LogisticRegression
-from sklearn.metrics import accuracy_score, roc_auc_score, average_precision_score
+from sklearn.metrics import accuracy_score, roc_auc_score, average_precision_score, precision_score, recall_score, f1_score
 
 # Cấu hình giao diện biểu đồ
 sns.set_theme(style="whitegrid") # nền trắng, lưới
@@ -174,23 +174,28 @@ for name, clf in classifiers.items():# duyệt qua từng mô hình trong classi
     # [:, 1] lấy tất cả các hàng nhưng chỉ lấy cột thứ 2 (index =1) tức chỉ giữ lại các số xác suất đạt trạng thái tối ưu
     
     acc = accuracy_score(y_test, y_pred)
-    # so sánh trực tiếp đáp án thực tế y_test với dự đoán y_pred ( 0 hoặc 1) để tính tỷ lệ dự đoán đúng trên tổng số dòng dữ liệu
-    # acc = số tuần đúng / tổng số tuần
+    prec = precision_score(y_test, y_pred)
+    rec = recall_score(y_test, y_pred)
+    f1 = f1_score(y_test, y_pred)
     pr_auc = average_precision_score(y_test, y_prob)
-    # so sánh đáp án thật y_test với điểm xác suất y_prob để tính diện tích dưới đường cong Precision-Recall (PR-AUC)
-    # PR-AUC = 1 là dự đoán hoàn hảo, PR-AUC = 0.5 là dự đoán ngẫu nhiên, PR-AUC < 0.5 là dự đoán sai lệch
     roc_auc = roc_auc_score(y_test, y_prob)
-    # so sánh đáp án thật y_test với điểm xác suất y_prob để tính diện tích dưới đường cong ROC (ROC-AUC)
-    # ROC-AUC = 1 là dự đoán hoàn hảo, ROC-AUC = 0.5 là dự đoán ngẫu nhiên, ROC-AUC < 0.5 là dự đoán sai lệch
     
-    results.append({'Mô hình': name, 'Accuracy': acc, 'PR-AUC': pr_auc, 'ROC-AUC': roc_auc})
+    results.append({
+        'Mô hình': name,
+        'Accuracy': acc,
+        'Precision (Tối ưu)': prec,
+        'Recall (Tối ưu)': rec,
+        'F1-score (Tối ưu)': f1,
+        'PR-AUC': pr_auc,
+        'ROC-AUC': roc_auc
+    })
     trained_models[name] = pipe
 
 results_df = pd.DataFrame(results).sort_values(by='ROC-AUC', ascending=False)
 print(results_df.to_string(index=False))
 
-# Chọn mô hình tốt nhất dựa trên ROC-AUC (hoặc chỉ định 'Random Forest' nếu muốn cố định)
-best_model_name = results_df.iloc[0]['Mô hình']
+# Cố định chọn 'Random Forest' đồng bộ với postAllocate_2.py
+best_model_name = 'Random Forest'
 best_model = trained_models[best_model_name]
 print(f"\n-> Mô hình tốt nhất được chọn để dự đoán xác suất tối ưu: {best_model_name}\n")
 
@@ -234,5 +239,33 @@ axes[1].set_xlabel('Chiến dịch')
 axes[1].set_ylabel('Kênh')
 
 plt.tight_layout()
-plt.savefig('phan_tich_quang_cao2.png', dpi=150)
+plt.savefig('phan_tich_quang_cao.png', dpi=150)
+plt.show()
+
+# ==============================================================================
+# PHẦN 6: PHÂN TÍCH MỨC ĐỘ QUAN TRỌNG CỦA ĐẶC TRƯNG (FEATURE IMPORTANCE)
+# ==============================================================================
+ohe_feature_names = best_model.named_steps['preprocessor'].named_transformers_['cat'].get_feature_names_out(cat_features)
+all_feature_names = num_features + list(ohe_feature_names)
+
+importances = best_model.named_steps['classifier'].feature_importances_
+fi_df = pd.DataFrame({
+    'Đặc trưng (Feature)': all_feature_names,
+    'Mức độ quan trọng': importances
+}).sort_values(by='Mức độ quan trọng', ascending=False)
+
+print("\n=== 6. BẢNG XẾP HẠNG TẦM QUAN TRỌNG ĐẶC TRƯNG (RANDOM FOREST) ===")
+print(fi_df.head(10).to_string(index=False))
+
+plt.figure(figsize=(10, 5.5))
+top_10_fi = fi_df.head(10).sort_values(by='Mức độ quan trọng', ascending=True)
+bars = plt.barh(top_10_fi['Đặc trưng (Feature)'], top_10_fi['Mức độ quan trọng'], color='#2980b9', height=0.6)
+plt.title('Top 10 Đặc trưng Ảnh hưởng Mạnh nhất đến Hiệu quả Quảng cáo (Random Forest)', fontweight='bold')
+plt.xlabel('Mức độ quan trọng (Feature Importance)')
+plt.xlim(0, top_10_fi['Mức độ quan trọng'].max() * 1.18)
+for bar in bars:
+    w = bar.get_width()
+    plt.text(w + 0.003, bar.get_y() + bar.get_height()/2, f'{w:.4f}', va='center', fontweight='bold')
+plt.tight_layout()
+plt.savefig('feature_importance_rf.png', dpi=150)
 plt.show()

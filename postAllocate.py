@@ -8,7 +8,7 @@ from sklearn.compose import ColumnTransformer
 from sklearn.pipeline import Pipeline
 from sklearn.ensemble import RandomForestClassifier, GradientBoostingClassifier
 from sklearn.linear_model import LogisticRegression
-from sklearn.metrics import accuracy_score, roc_auc_score, average_precision_score
+from sklearn.metrics import accuracy_score, roc_auc_score, average_precision_score, precision_score, recall_score, f1_score
 
 # 1. Đọc dữ liệu và tổng hợp theo chu kỳ Tuần (đồng bộ với analyticalOverview_2.py)
 df = pd.read_csv('media_all_channels_cleaned.csv')
@@ -64,6 +64,9 @@ for name, clf in classifiers.items():
     results.append({
         'Mô hình': name,
         'Accuracy': accuracy_score(y_test, y_pred),
+        'Precision (Tối ưu)': precision_score(y_test, y_pred),
+        'Recall (Tối ưu)': recall_score(y_test, y_pred),
+        'F1-score (Tối ưu)': f1_score(y_test, y_pred),
         'PR-AUC': average_precision_score(y_test, y_prob),
         'ROC-AUC': roc_auc_score(y_test, y_prob)
     })
