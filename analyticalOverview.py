@@ -2,6 +2,7 @@ import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
 import seaborn as sns
+from sklearn.metrics import accuracy_score, roc_auc_score, average_precision_score, precision_score, recall_score, f1_score, confusion_matrix
 from sklearn.model_selection import train_test_split # chia dữ liệu thành tập train/test
 from sklearn.preprocessing import OneHotEncoder, StandardScaler# tiền xử lý trước khi đưa vào model
 from sklearn.compose import ColumnTransformer
@@ -286,4 +287,37 @@ for bar in bars:
     plt.text(w + 0.003, bar.get_y() + bar.get_height()/2, f'{w:.4f}', va='center', fontweight='bold')
 plt.tight_layout()
 plt.savefig('feature_importance_lr.png', dpi=150)
+plt.show()
+# ==============================================================================
+# PHẦN 7: MA TRẬN NHẦM LẪN (CONFUSION MATRIX) TRÊN TẬP TEST (20%)
+# ==============================================================================
+# Xuất dự đoán của Logistic Regression và Random Forest trên tập Test
+y_pred_lr = trained_models['Logistic Regression'].predict(X_test)
+y_pred_rf = trained_models['Random Forest'].predict(X_test)
+
+cm_lr = confusion_matrix(y_test, y_pred_lr)
+cm_rf = confusion_matrix(y_test, y_pred_rf)
+
+print("\n=== 7. CONFUSION MATRIX TRÊN TẬP TEST (228 TUẦN) ===")
+print("-> Logistic Regression:\n", cm_lr)
+print("-> Random Forest:\n", cm_rf)
+
+# Vẽ biểu đồ Confusion Matrix so sánh 2 mô hình tốt nhất
+fig, axes = plt.subplots(1, 2, figsize=(12, 5))
+labels = ['Chưa tối ưu (0)', 'Tối ưu (1)']
+
+sns.heatmap(cm_lr, annot=True, fmt='d', cmap='Blues', xticklabels=labels, yticklabels=labels,
+            annot_kws={'size': 14, 'weight': 'bold'}, cbar=False, ax=axes[0])
+axes[0].set_title('Confusion Matrix - Logistic Regression\n(Accuracy: 87.72% | F1: 0.8803)', fontweight='bold')
+axes[0].set_xlabel('Nhãn Dự đoán (Predicted)')
+axes[0].set_ylabel('Nhãn Thực tế (Actual)')
+
+sns.heatmap(cm_rf, annot=True, fmt='d', cmap='Greens', xticklabels=labels, yticklabels=labels,
+            annot_kws={'size': 14, 'weight': 'bold'}, cbar=False, ax=axes[1])
+axes[1].set_title('Confusion Matrix - Random Forest\n(Accuracy: 86.84% | F1: 0.8707)', fontweight='bold')
+axes[1].set_xlabel('Nhãn Dự đoán (Predicted)')
+axes[1].set_ylabel('Nhãn Thực tế (Actual)')
+
+plt.tight_layout()
+plt.savefig('confusion_matrix_test.png', dpi=150)
 plt.show()
