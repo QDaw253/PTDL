@@ -35,11 +35,13 @@ features = cat_cols + num_cols
 
 X_train, X_test, y_train, y_test = train_test_split(
     weekly_df[features], weekly_df['is_optimized'], test_size=0.2, random_state=42, stratify=weekly_df['is_optimized']
+    # đây là kỹ thuật phân tầng ép buộc tỉ lệ tối ưu và không tối ưu trong tập huấn luyện và tập kiểm tra giống nhau, tránh tình trạng mất cân bằng dữ liệu
 )
 
 preprocessor = ColumnTransformer([
-    ('num', StandardScaler(), num_cols),
+    ('num', StandardScaler(), num_cols), # standardScaler đưa cột số về cùng một thang đo chuẩn gtri trung bình 0 độ lệch 1
     ('cat', OneHotEncoder(drop='first', sparse_output=False), cat_cols)
+    #onehotencoder mã hóa các cột thành dạng 0 và 1 
 ])
 
 classifiers = {
@@ -75,10 +77,9 @@ for name, clf in classifiers.items():
 results_df = pd.DataFrame(results).sort_values(by='ROC-AUC', ascending=False)
 print(results_df.to_string(index=False))
 
-# Giữ cố định mô hình Random Forest cho bước dự đoán xác suất phân bổ ngân sách
-selected_model_name = 'Random Forest'
-model = trained_models[selected_model_name]
-print(f"\n-> Giữ cố định mô hình '{selected_model_name}' cho bước mô phỏng phân bổ ngân sách.\n")
+best_model_name = results_df.iloc[0]['Mô hình']
+model = trained_models[best_model_name]
+print(f"\n-> Sử dụng mô hình tối ưu nhất '{best_model_name}' cho bước mô phỏng phân bổ ngân sách.\n")
 
 # 3. Tổng hợp 42 cặp Kênh + Chiến dịch & dự đoán xác suất tối ưu
 cc_df = df.groupby(['channel', 'campaign']).agg({
@@ -99,7 +100,7 @@ total_initial_profit = total_initial_rev - total_initial_cost
 def get_weight_multiplier(row):
     if row['opt_prob'] >= 0.70 and row['is_optimized'] == 1:
         return 1.30  # Tăng 30% trọng số vốn
-    elif row['opt_prob'] < 0.40 and row['is_optimized'] == 0:
+    elif row['opt_prob'] < 0.45 and row['is_optimized'] == 0:
         return 0.70  # Giảm 30% trọng số vốn
     return 1.00
 
@@ -111,17 +112,23 @@ cc_df['new_cost'] = cc_df['raw_new_cost'] * (total_initial_cost / cc_df['raw_new
 # Điều chỉnh ROAS mới theo quy luật hiệu suất biên giảm dần (Diminishing Returns, alpha = 0.15)
 alpha = 0.15
 cc_df['adjusted_roas'] = cc_df['roas'] * ((cc_df['cost'] / cc_df['new_cost']) ** alpha)
+#cc_df['cost'] / cc_df['new_cost']: Tỷ số nghịch đảo giữa ngân sách cũ và ngân sách mới:
+#Khi tăng ngân sách (new_cost lớn hơn cost): Tỷ số này nhỏ hơn 1 (ví dụ $100 / 125 = 0.8$). Khi nâng lên lũy thừa $\alpha = 0.15$,
+#  ta được $0.8^{0.15} \approx 0.967$, tức là adjusted_roas giảm nhẹ ~3.3% so với roas ban đầu để phản ánh sự bão hòa thị trường.
+#Khi giảm ngân sách (new_cost nhỏ hơn cost): Tỷ số này lớn hơn 1 (ví dụ $100 / 80 = 1.25$). Khi nâng lên lũy thừa $\alpha = 0.15$, 
+# ta được $1.25^{0.15} \approx 1.034$, tức là adjusted_roas tăng nhẹ ~3.4% do cô đọng ngân sách vào nhóm khách hàng hiệu quả nhất.
 
 # Tính Doanh thu dự kiến mới dựa trên ROAS đã điều chỉnh
 cc_df['new_revenue'] = cc_df['new_cost'] * cc_df['adjusted_roas']
 
 total_new_rev = cc_df['new_revenue'].sum()
 total_new_profit = total_new_rev - total_initial_cost
-rev_gain = total_new_rev - total_initial_rev
-rev_gain_pct = (rev_gain / total_initial_rev) * 100
-profit_gain_pct = (rev_gain / total_initial_profit) * 100
+rev_gain = total_new_rev - total_initial_rev# mức tăng trưởng doanh thu tuyệt đối (số tiền kiếm thêm được khi tái phân bổ ngân sách)
+rev_gain_pct = (rev_gain / total_initial_rev) * 100 # quy đổi mức doanh thu tăng thêm thành tỷ lệ % tăng trưởng doanh thu
+profit_gain_pct = (rev_gain / total_initial_profit) * 100# quy đổi mức lợi nhuận tăng thêm thành tỷ lệ % tăng trưởng lợi nhuận
+# profit_gain = rev_gain, vì tổng chi phí không đổi, nên mức tăng trưởng lợi nhuận tuyệt đối = mức tăng trưởng doanh thu tuyệt đối
 
-print(f"=== KẾT QUẢ MÔ PHỎNG TỐI ƯU HÓA DOANH THU & LỢI NHUẬN ({selected_model_name}) ===")
+print(f"=== KẾT QUẢ MÔ PHỎNG TỐI ƯU HÓA DOANH THU & LỢI NHUẬN ({best_model_name}) ===")
 print(f"Tổng Ngân sách Ban đầu:    {total_initial_cost:,.2f}")
 print(f"Tổng Ngân sách Mới:        {cc_df['new_cost'].sum():,.2f}")
 print(f"Doanh thu Ban đầu:         {total_initial_rev:,.2f}")
@@ -140,7 +147,7 @@ axes[0].bar(x - w/2, ch_comp['cost']/1e6, w, label='Ngân sách Ban đầu', col
 axes[0].bar(x + w/2, ch_comp['new_cost']/1e6, w, label='Ngân sách Tối ưu Mới', color='#3498db')
 axes[0].set_xticks(x)
 axes[0].set_xticklabels(ch_comp['channel'], rotation=25)
-axes[0].set_title(f'Dịch chuyển Ngân sách theo Kênh ({selected_model_name})')
+axes[0].set_title(f'Dịch chuyển Ngân sách theo Kênh ({best_model_name})')
 axes[0].set_ylabel('Triệu USD')
 axes[0].legend()
 

@@ -163,22 +163,27 @@ for name, clf in classifiers.items():# duyệt qua từng mô hình trong classi
         ('preprocessor', preprocessor),# trạm 1 nhận dữ liệu X tự chuẩn hóa bằng standardScaler và mã hóa OneHotEncoder chữ thành số
         ('classifier', clf)# trạm 2 nhận dữ liệu đã chuẩn hóa và huấn luyện mô hình phân loại clf (Random Forest, Logistic Regression hoặc Gradient Boosting)
     ])
-    pipe.fit(X_train, y_train)# kích hoạt học trên 80% dữ liệu huấn luyện 
+    pipe.fit(X_train, y_train)# kích hoạt học trên 80% dữ liệu huấn luyện
     # ở trạm 1 nó tính toán rồi ghi nhớ gtri trung bình và độ lệch chuẩn của các cột số, đồng thời ghi nhớ các giá trị phân loại của các cột chữ để mã hóa OneHotEncoder
     # ở trạm 2 liên hệ giữa dữ liệu x_train đã biến đổi và đáp án y_train để tìm ra các trọng số tối ưu cho mô hình phân loại
     y_pred = pipe.predict(X_test)
+    # là chỉ số chốt dứt khoát nhãn tối ưu (1) hay chưa tối ưu (0) cho từng dòng dữ liệu trong X_test, dựa trên xác suất dự đoán từ mô hình
     # đưa dữ liệu 20% tập kiểm tra X_test đã chuẩn hóa vào mô hình để dự đoán nhãn tối ưu (0 hoặc 1) và lưu kết quả vào y_pred
     # tự áp dụng thông số đã train để biến đổi x_test không tính lại  sau đó đưa ra dự đoán nhãn tối ưu (0 hoặc 1) cho từng dòng dữ liệu trong X_test
     y_prob = pipe.predict_proba(X_test)[:, 1]
-    # predict_proba() trả về bảng gồm 2 cột xác suất 0 và 1 tổng xs 2 cột trên 1 hàng luôn bằng 1.0 
+    # là mức độ tự tin của mô hình khi đánh giá từng tuần trong x_test có đạt trạng thái tối ưu hay không, giá trị này nằm trong khoảng 0.0 đến 1.0
+    # predict_proba() trả về bảng gồm 2 cột xác suất 0 và 1 tổng xs 2 cột trên 1 hàng luôn bằng 1.0
     # [:, 1] lấy tất cả các hàng nhưng chỉ lấy cột thứ 2 (index =1) tức chỉ giữ lại các số xác suất đạt trạng thái tối ưu
     
-    acc = accuracy_score(y_test, y_pred)
-    prec = precision_score(y_test, y_pred)
-    rec = recall_score(y_test, y_pred)
-    f1 = f1_score(y_test, y_pred)
-    pr_auc = average_precision_score(y_test, y_prob)
-    roc_auc = roc_auc_score(y_test, y_prob)
+    acc = accuracy_score(y_test, y_pred)# độ chính xác tổng thể, lấy nhãn dự đoán cứng đối chiếu với đáp án thực y_test
+    prec = precision_score(y_test, y_pred) # precision_score là tỷ lệ dự đoán đúng nhãn tối ưu trên tổng số dự đoán nhãn tối ưu (True Positive / (True Positive + False Positive))
+    # tức là trong các tuần mà mô hình nói là tối ưu thực tế có bao nhiêu % là tối ưu thật
+    rec = recall_score(y_test, y_pred) # trong những tuần thực sự tối ưu ngoài đời mô hình dự đoán được bao nhiêu %
+    f1 = f1_score(y_test, y_pred) # f1_score là trung bình điều hòa của precision và recall, f1 = 2 * (precision * recall) / (precision + recall)
+    pr_auc = average_precision_score(y_test, y_prob)# đo độ thông minh trong việc phân biệt tuần tối ưu và chưa tối ưu
+    # dùng điểm xác suất y_prob để kiểm tra
+    roc_auc = roc_auc_score(y_test, y_prob)# đo khả năng mô hình tìm đúng các tuần tối ưu sử dụng chỉ số này để chắc những chiến dịch được mô hình dự đoán là tối ưu thực sự mang lại hiệu quả
+
     
     results.append({
         'Mô hình': name,
@@ -194,20 +199,25 @@ for name, clf in classifiers.items():# duyệt qua từng mô hình trong classi
 results_df = pd.DataFrame(results).sort_values(by='ROC-AUC', ascending=False)
 print(results_df.to_string(index=False))
 
-# Cố định chọn 'Random Forest' đồng bộ với postAllocate_2.py
-best_model_name = 'Random Forest'
+# Cố định chọn 'Logistic Regression' là mô hình tốt nhất để dự đoán xác suất tối ưu cho từng cặp Kênh + Chiến dịch
+# Tự động lấy tên mô hình đứng đầu bảng xếp hạng (có ROC-AUC cao nhất)
+best_model_name = results_df.iloc[0]['Mô hình'] # lấy tự động tên của mô hình đứng đầu bảng xếp hạng (có ROC-AUC cao nhất)
 best_model = trained_models[best_model_name]
-print(f"\n-> Mô hình tốt nhất được chọn để dự đoán xác suất tối ưu: {best_model_name}\n")
+
+print(f"\n-> Mô hình tốt nhất được chọn tự động dựa trên ROC-AUC: {best_model_name}\n")
 
 # Tính trung bình theo tuần của 42 cặp Kênh + Chiến dịch để dự đoán xác suất tối ưu
 cc_weekly_avg = weekly_df.groupby(['channel', 'campaign'])[num_features].mean().reset_index()
 cc_df['opt_prob'] = best_model.predict_proba(cc_weekly_avg[features])[:, 1]
+# dùng mô hình tốt nhất được lựa chọn đã huấn luyện để tính toán xác suất trạng thái tối ưu nó được ví như điểm đánh giá sinh lời của từng cặp kênh+chiến dịch
+# predict_proba() trả về bảng gồm 2 cột xác suất 0 và 1 tổng xs 2 cột trên 1 hàng luôn bằng 1.0
+# khi nó sử dụng tự động chuẩn hóa StandardScaler, mã hóa OneHotEncoder, rồi chạy qua Logistic Regression
 
 # Quy tắc đề xuất tăng/giảm ngân sách kết hợp giữa Nhãn thực tế & Xác suất mô hình
 def recommend_budget(row):
     if row['opt_prob'] >= 0.70 and row['is_optimized'] == 1:
         return 'Tăng ngân sách (+30%)'
-    elif row['opt_prob'] < 0.40 and row['is_optimized'] == 0:
+    elif row['opt_prob'] < 0.45 and row['is_optimized'] == 0:
         return 'Giảm ngân sách (-30%)'
     else:
         return 'Giữ nguyên / Tối ưu nội dung'
@@ -222,23 +232,24 @@ print(cc_df[['channel', 'campaign', 'roas', 'opt_prob', 'status', 'recommendatio
 # ==============================================================================
 fig, axes = plt.subplots(1, 2, figsize=(16, 6))
 
-x_pos = np.arange(len(channel_df))
+x_pos = np.arange(len(channel_df))# tạo 1 mảng số nguyên từ 0 đến số lượng kênh -1 để làm trục x cho biểu đồ cột
 width = 0.35
 axes[0].bar(x_pos - width/2, channel_df['cost']/1e6, width, label='Chi phí (Triệu USD)', color='#e74c3c')
 axes[0].bar(x_pos + width/2, channel_df['revenue']/1e6, width, label='Doanh thu (Triệu USD)', color='#2ecc71')
-axes[0].set_xticks(x_pos)
-axes[0].set_xticklabels(channel_df['channel'], rotation=25)
+axes[0].set_xticks(x_pos)# trục chia nằm chính giữa
+axes[0].set_xticklabels(channel_df['channel'], rotation=25)# thay thế nhãn trục x bằng tên kênh, xoay 25 độ để dễ đọc
 axes[0].set_title('So sánh Chi phí và Doanh thu theo Kênh')
 axes[0].set_ylabel('Triệu USD')
-axes[0].legend()
+axes[0].legend()# hiển thị chú thích cho các cột màu
 
-pivot_roas = cc_df.pivot(index='channel', columns='campaign', values='roas')
+pivot_roas = cc_df.pivot(index='channel', columns='campaign', values='roas')# pivot tạo ma trận 
 sns.heatmap(pivot_roas, annot=True, fmt='.2f', cmap='YlGnBu', ax=axes[1])
+# heatmap dùng thư viện seaborn để tô màu ma trận ROAS theo Kênh và Chiến dịch, annot=True để hiển thị giá trị trong từng ô, fmt='.2f' để định dạng số thập phân 2 chữ số, cmap='YlGnBu' là bảng màu từ vàng sang xanh dương
 axes[1].set_title('Ma trận ROAS theo Kênh và Chiến dịch')
 axes[1].set_xlabel('Chiến dịch')
 axes[1].set_ylabel('Kênh')
 
-plt.tight_layout()
+plt.tight_layout()# tự động điều chỉnh khoảng cách giữa các biểu đồ con để tránh bị chồng lấn
 plt.savefig('phan_tich_quang_cao.png', dpi=150)
 plt.show()
 
@@ -248,24 +259,31 @@ plt.show()
 ohe_feature_names = best_model.named_steps['preprocessor'].named_transformers_['cat'].get_feature_names_out(cat_features)
 all_feature_names = num_features + list(ohe_feature_names)
 
-importances = best_model.named_steps['classifier'].feature_importances_
+clf_step = best_model.named_steps['classifier']
+
+if hasattr(clf_step, 'feature_importances_'):
+    importances = clf_step.feature_importances_
+elif hasattr(clf_step, 'coef_'):
+    # Với LogisticRegression, coef_ có dạng mảng 2 chiều [[w1, w2, ...]] nên cần [0]
+    # Dùng np.abs() để lấy độ lớn mức độ ảnh hưởng (bỏ qua dấu âm/dương)
+    importances = np.abs(clf_step.coef_[0])
 fi_df = pd.DataFrame({
     'Đặc trưng (Feature)': all_feature_names,
     'Mức độ quan trọng': importances
 }).sort_values(by='Mức độ quan trọng', ascending=False)
 
-print("\n=== 6. BẢNG XẾP HẠNG TẦM QUAN TRỌNG ĐẶC TRƯNG (RANDOM FOREST) ===")
+print("\n=== 6. BẢNG XẾP HẠNG TẦM QUAN TRỌNG ĐẶC TRƯNG (Logistic Regression) ===")
 print(fi_df.head(10).to_string(index=False))
 
 plt.figure(figsize=(10, 5.5))
 top_10_fi = fi_df.head(10).sort_values(by='Mức độ quan trọng', ascending=True)
 bars = plt.barh(top_10_fi['Đặc trưng (Feature)'], top_10_fi['Mức độ quan trọng'], color='#2980b9', height=0.6)
-plt.title('Top 10 Đặc trưng Ảnh hưởng Mạnh nhất đến Hiệu quả Quảng cáo (Random Forest)', fontweight='bold')
+plt.title('Top 10 Đặc trưng Ảnh hưởng Mạnh nhất đến Hiệu quả Quảng cáo (Logistic Regression)', fontweight='bold')
 plt.xlabel('Mức độ quan trọng (Feature Importance)')
 plt.xlim(0, top_10_fi['Mức độ quan trọng'].max() * 1.18)
 for bar in bars:
     w = bar.get_width()
     plt.text(w + 0.003, bar.get_y() + bar.get_height()/2, f'{w:.4f}', va='center', fontweight='bold')
 plt.tight_layout()
-plt.savefig('feature_importance_rf.png', dpi=150)
+plt.savefig('feature_importance_lr.png', dpi=150)
 plt.show()
